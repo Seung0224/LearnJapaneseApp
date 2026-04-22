@@ -61,15 +61,17 @@ KATAKANA = {
     "ピャ": "퍄", "ピュ": "퓨", "ピョ": "표",
 }
 
-BG       = "#0d0d1a"
-CARD_BG  = "#16162a"
-BORDER   = "#2e2e50"
-ACCENT   = "#7c6af7"
-CORRECT  = "#3dd68c"
-WRONG    = "#ff5f5f"
-TEXT     = "#f0f0ff"
-SUBTEXT  = "#6666aa"
-DIM      = "#2a2a45"
+BG         = "#0d0d1a"
+CARD_BG    = "#16162a"
+BORDER     = "#2e2e50"
+ACCENT     = "#7c6af7"
+CORRECT    = "#3dd68c"
+WRONG      = "#ff5f5f"
+TEXT       = "#f0f0ff"
+SUBTEXT    = "#6666aa"
+DIM        = "#2a2a45"
+DIM_GREEN  = "#1a3328"
+DIM_PURPLE = "#2a2a45"
 
 
 def rounded_rect(canvas, x1, y1, x2, y2, r, **kwargs):
@@ -81,29 +83,33 @@ def rounded_rect(canvas, x1, y1, x2, y2, r, **kwargs):
     canvas.create_rectangle(x1,   y1+r, x2,   y2-r, **kwargs)
 
 
-def make_btn(parent, text, sub, command):
-    """시작화면용 큰 선택 버튼"""
-    frame = tk.Frame(parent, bg=DIM, cursor="hand2", height=80)
+def make_btn(parent, text, sub, command, compact=False,
+             idle_color=DIM, hover_color=ACCENT):
+    h          = 65  if compact else 80
+    title_size = 14  if compact else 17
+    sub_size   = 9   if compact else 11
+
+    frame = tk.Frame(parent, bg=idle_color, cursor="hand2", height=h)
     frame.pack_propagate(False)
 
-    inner = tk.Frame(frame, bg=DIM)
+    inner = tk.Frame(frame, bg=idle_color)
     inner.place(relx=0.5, rely=0.5, anchor="center")
 
-    tk.Label(inner, text=text, bg=DIM, fg=TEXT,
-             font=("Segoe UI", 17, "bold")).pack()
-    tk.Label(inner, text=sub, bg=DIM, fg=SUBTEXT,
-             font=("Segoe UI", 11)).pack(pady=(3, 0))
+    tk.Label(inner, text=text, bg=idle_color, fg=TEXT,
+             font=("Segoe UI", title_size, "bold")).pack()
+    tk.Label(inner, text=sub, bg=idle_color, fg=SUBTEXT,
+             font=("Segoe UI", sub_size)).pack(pady=(2, 0))
 
     def on_enter(_):
-        frame.config(bg=ACCENT)
-        inner.config(bg=ACCENT)
+        frame.config(bg=hover_color)
+        inner.config(bg=hover_color)
         for w in inner.winfo_children():
-            w.config(bg=ACCENT)
+            w.config(bg=hover_color)
     def on_leave(_):
-        frame.config(bg=DIM)
-        inner.config(bg=DIM)
+        frame.config(bg=idle_color)
+        inner.config(bg=idle_color)
         for w in inner.winfo_children():
-            w.config(bg=DIM)
+            w.config(bg=idle_color)
     def on_click(_):
         command()
 
@@ -115,31 +121,59 @@ def make_btn(parent, text, sub, command):
     return frame
 
 
+def make_action_btn(parent, text, color, command):
+    """완료 화면 하단 액션 버튼"""
+    frame = tk.Frame(parent, bg=color, cursor="hand2")
+    lbl = tk.Label(frame, text=text, bg=color, fg=TEXT,
+                   font=("Segoe UI", 12, "bold"), padx=18, pady=10)
+    lbl.pack()
+
+    def on_enter(_):
+        frame.config(bg=TEXT); lbl.config(bg=TEXT, fg=color)
+    def on_leave(_):
+        frame.config(bg=color); lbl.config(bg=color, fg=TEXT)
+    def on_click(_):
+        command()
+
+    for w in (frame, lbl):
+        w.bind("<Enter>",    on_enter)
+        w.bind("<Leave>",    on_leave)
+        w.bind("<Button-1>", on_click)
+
+    return frame
+
+
 class KanaQuiz(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("일본어 퀴즈")
-        self.geometry("460x560")
+        self.geometry("540x620")
         self.resizable(False, False)
         self.configure(bg=BG)
 
-        self.correct      = 0
-        self.total        = 0
-        self.streak       = 0
-        self.kana_list    = []
+        self.correct        = 0
+        self.total          = 0
+        self.streak         = 0
+        self.kana_list      = []
         self.current_kana   = ""
         self.current_answer = ""
         self.feedback_job   = None
         self.hint_window    = None
+        self.no_dupe_mode   = False
+        self.deck           = []
+        self.deck_total     = 0
+        self.wrong_set      = []   # 오답 목록 (중복 없음)
 
         base = os.path.dirname(os.path.abspath(__file__))
         self.table_img_path = os.path.join(base, "Table.png")
 
-        self.start_frame = tk.Frame(self, bg=BG)
-        self.quiz_frame  = tk.Frame(self, bg=BG)
+        self.start_frame    = tk.Frame(self, bg=BG)
+        self.quiz_frame     = tk.Frame(self, bg=BG)
+        self.complete_frame = tk.Frame(self, bg=BG)
 
         self._build_start()
         self._build_quiz()
+        self._build_complete()
         self._show_start()
 
     # ── 시작 화면 ───────────────────────────────────
@@ -147,24 +181,44 @@ class KanaQuiz(tk.Tk):
         f = self.start_frame
 
         tk.Label(f, text="あア", bg=BG, fg=ACCENT,
-                 font=("Meiryo", 52, "bold")).pack(pady=(44, 0))
-
+                 font=("Meiryo", 52, "bold")).pack(pady=(36, 0))
         tk.Label(f, text="일본어 퀴즈", bg=BG, fg=TEXT,
                  font=("Segoe UI", 24, "bold")).pack(pady=(8, 4))
-
         tk.Label(f, text="모드를 선택하세요", bg=BG, fg=SUBTEXT,
-                 font=("Segoe UI", 12)).pack(pady=(0, 28))
+                 font=("Segoe UI", 12)).pack(pady=(0, 14))
+
+        btn_area = tk.Frame(f, bg=BG)
+        btn_area.pack(fill="x", padx=20)
+        btn_area.columnconfigure(0, weight=1, uniform="col")
+        btn_area.columnconfigure(1, weight=1, uniform="col")
+
+        left_col  = tk.Frame(btn_area, bg=BG)
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        right_col = tk.Frame(btn_area, bg=BG)
+        right_col.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+
+        tk.Label(left_col,  text="비중복 모드",  bg=BG, fg=CORRECT,
+                 font=("Segoe UI", 11, "bold")).pack(pady=(0, 8))
+        tk.Label(right_col, text="무한반복 모드", bg=BG, fg=ACCENT,
+                 font=("Segoe UI", 11, "bold")).pack(pady=(0, 8))
 
         btns = [
-            ("히라가나", "あ  い  う  え  お  …", HIRAGANA),
-            ("가타카나", "ア  イ  ウ  エ  オ  …", KATAKANA),
-            ("전  체",   "히라가나 + 가타카나",    {**HIRAGANA, **KATAKANA}),
+            ("히라가나", "あ い う え お…", HIRAGANA),
+            ("가타카나", "ア イ ウ エ オ…", KATAKANA),
+            ("전  체",   "히라가나 + 가타카나",  {**HIRAGANA, **KATAKANA}),
         ]
         for label, sub, data in btns:
-            btn = make_btn(f, label, sub, lambda d=data: self._start_quiz(d))
-            btn.pack(fill="x", padx=48, pady=7)
+            make_btn(left_col,  label, sub,
+                     lambda d=data: self._start_quiz(d, no_dupe=True),
+                     compact=True,
+                     idle_color=DIM_GREEN,  hover_color=CORRECT).pack(fill="x", pady=5)
+            make_btn(right_col, label, sub,
+                     lambda d=data: self._start_quiz(d, no_dupe=False),
+                     compact=True,
+                     idle_color=DIM_PURPLE, hover_color=ACCENT).pack(fill="x", pady=5)
 
     def _show_start(self):
+        self.complete_frame.pack_forget()
         self.quiz_frame.pack_forget()
         self.start_frame.pack(fill="both", expand=True)
 
@@ -172,11 +226,9 @@ class KanaQuiz(tk.Tk):
     def _build_quiz(self):
         f = self.quiz_frame
 
-        # 상단 바
         top = tk.Frame(f, bg=BG)
         top.pack(fill="x", padx=24, pady=(20, 0))
 
-        # ← 뒤로가기
         back = tk.Label(top, text="←  메인", bg=BG, fg=SUBTEXT,
                         font=("Segoe UI", 10), cursor="hand2")
         back.pack(side="left")
@@ -184,7 +236,6 @@ class KanaQuiz(tk.Tk):
         back.bind("<Enter>",    lambda e: back.config(fg=TEXT))
         back.bind("<Leave>",    lambda e: back.config(fg=SUBTEXT))
 
-        # Hint
         self.hint_btn = tk.Label(
             top, text="  Hint  ", bg=DIM, fg=ACCENT,
             font=("Segoe UI", 10, "bold"), cursor="hand2", pady=5
@@ -194,9 +245,13 @@ class KanaQuiz(tk.Tk):
         self.hint_btn.bind("<Enter>",    lambda e: self.hint_btn.config(bg=ACCENT, fg=TEXT))
         self.hint_btn.bind("<Leave>",    lambda e: self.hint_btn.config(bg=DIM,    fg=ACCENT))
 
-        # 점수
         right = tk.Frame(top, bg=BG)
         right.pack(side="right")
+
+        # 비중복 모드 남은 문제 수
+        self.remain_label = tk.Label(right, text="", bg=BG, fg=CORRECT,
+                                     font=("Segoe UI", 11))
+        self.remain_label.pack(side="left", padx=(0, 12))
 
         self.streak_label = tk.Label(right, text="", bg=BG, fg="#f5a623",
                                      font=("Segoe UI", 11))
@@ -206,17 +261,14 @@ class KanaQuiz(tk.Tk):
                                     font=("Segoe UI", 11))
         self.score_label.pack(side="left")
 
-        # 카드
         self.card_canvas = tk.Canvas(f, width=400, height=260,
                                      bg=BG, highlightthickness=0)
         self.card_canvas.pack(pady=(18, 0))
 
-        # 피드백
         self.feedback_label = tk.Label(f, text="", bg=BG, fg=CORRECT,
                                        font=("Segoe UI", 14, "bold"))
         self.feedback_label.pack(pady=(10, 0))
 
-        # 입력창
         entry_outer = tk.Frame(f, bg=BORDER, padx=2, pady=2)
         entry_outer.pack(fill="x", padx=40, pady=(8, 4))
 
@@ -234,14 +286,98 @@ class KanaQuiz(tk.Tk):
         tk.Label(f, text="한글 발음 입력 후  Enter",
                  bg=BG, fg=SUBTEXT, font=("Segoe UI", 9)).pack()
 
-    def _start_quiz(self, data: dict):
-        self.kana_list  = list(data.items())
-        self.correct    = 0
-        self.total      = 0
-        self.streak     = 0
+    # ── 완료 화면 ───────────────────────────────────
+    def _build_complete(self):
+        f = self.complete_frame
+
+        tk.Label(f, text="", bg=BG).pack(pady=(60, 0))
+
+        self.complete_title = tk.Label(f, text="", bg=BG, fg=CORRECT,
+                                       font=("Segoe UI", 32, "bold"))
+        self.complete_title.pack()
+
+        self.complete_score = tk.Label(f, text="", bg=BG, fg=TEXT,
+                                       font=("Segoe UI", 18))
+        self.complete_score.pack(pady=(20, 0))
+
+        self.complete_sub = tk.Label(f, text="", bg=BG, fg=SUBTEXT,
+                                     font=("Segoe UI", 12))
+        self.complete_sub.pack(pady=(8, 0))
+
+        # 버튼 영역 (완료 상태에 따라 동적으로 채움)
+        self.complete_btn_area = tk.Frame(f, bg=BG)
+        self.complete_btn_area.pack(pady=(40, 0))
+
+    def _show_complete(self):
+        if self.feedback_job:
+            self.after_cancel(self.feedback_job)
+            self.feedback_job = None
+
+        pct      = int(self.correct / self.total * 100) if self.total > 0 else 0
+        all_good = len(self.wrong_set) == 0
+
+        # 완료 화면 텍스트 구성
+        if all_good:
+            self.complete_title.config(text="다 맞추셨습니다!", fg=CORRECT)
+            self.complete_sub.config(text="완벽해요! 모든 문제를 정답으로 푸셨습니다.")
+        else:
+            self.complete_title.config(text="끝났습니다!", fg=ACCENT)
+            self.complete_sub.config(text=f"틀린 문제  {len(self.wrong_set)}개")
+
+        self.complete_score.config(
+            text=f"정답률  {pct}%  ({self.correct} / {self.total})")
+
+        # 버튼 초기화 후 재구성
+        for w in self.complete_btn_area.winfo_children():
+            w.destroy()
+
+        if not all_good:
+            make_action_btn(
+                self.complete_btn_area,
+                "틀린 시험 다시보기",
+                WRONG,
+                self._retry_wrong
+            ).pack(side="left", padx=10)
+
+        make_action_btn(
+            self.complete_btn_area,
+            "홈으로 가기",
+            DIM,
+            self._show_start
+        ).pack(side="left", padx=10)
+
+        # 화면 전환
+        self.quiz_frame.pack_forget()
+        self.complete_frame.pack(fill="both", expand=True)
+
+    def _retry_wrong(self):
+        wrong_data = dict(self.wrong_set)
+        self._start_quiz(wrong_data, no_dupe=True)
+
+    # ── 퀴즈 로직 ───────────────────────────────────
+    def _start_quiz(self, data: dict, no_dupe: bool = False):
+        self.no_dupe_mode = no_dupe
+        self.kana_list    = list(data.items())
+        self.wrong_set    = []
+        self.correct      = 0
+        self.total        = 0
+        self.streak       = 0
+
+        if no_dupe:
+            self.deck       = self.kana_list.copy()
+            random.shuffle(self.deck)
+            self.deck_total = len(self.deck)
+            self.remain_label.config(text=f"남은 문제: {self.deck_total} / {self.deck_total}")
+        else:
+            self.deck       = []
+            self.deck_total = 0
+            self.remain_label.config(text="")
+
         self.score_label.config(text="0 / 0")
         self.streak_label.config(text="")
+        self.entry.config(state="normal")
         self.start_frame.pack_forget()
+        self.complete_frame.pack_forget()
         self.quiz_frame.pack(fill="both", expand=True)
         self._next_question()
 
@@ -249,9 +385,9 @@ class KanaQuiz(tk.Tk):
         if self.feedback_job:
             self.after_cancel(self.feedback_job)
             self.feedback_job = None
+        self.entry.config(state="normal")
         self._show_start()
 
-    # ── 퀴즈 로직 ───────────────────────────────────
     def _draw_card(self, border_color):
         self.card_canvas.delete("all")
         rounded_rect(self.card_canvas, 2, 2, 398, 258, 22,
@@ -264,7 +400,16 @@ class KanaQuiz(tk.Tk):
         )
 
     def _next_question(self):
-        self.current_kana, self.current_answer = random.choice(self.kana_list)
+        if self.no_dupe_mode:
+            if not self.deck:
+                self._show_complete()
+                return
+            self.current_kana, self.current_answer = self.deck.pop(0)
+            remaining = len(self.deck)
+            self.remain_label.config(text=f"남은 문제: {remaining} / {self.deck_total}")
+        else:
+            self.current_kana, self.current_answer = random.choice(self.kana_list)
+
         self.feedback_label.config(text="")
         self._draw_card(BORDER)
         self.entry_var.set("")
@@ -307,6 +452,11 @@ class KanaQuiz(tk.Tk):
                 text=f"오답    정답:  {self.current_answer}", fg=WRONG)
             self._draw_card(WRONG)
             self.streak_label.config(text="")
+            # 오답 수집 (중복 없이)
+            if self.no_dupe_mode:
+                pair = (self.current_kana, self.current_answer)
+                if pair not in self.wrong_set:
+                    self.wrong_set.append(pair)
 
         pct = int(self.correct / self.total * 100)
         self.score_label.config(text=f"{self.correct} / {self.total}  ({pct}%)")
