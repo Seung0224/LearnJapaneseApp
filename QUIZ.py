@@ -178,10 +178,12 @@ class KanaQuiz(tk.Tk):
         self.start_frame    = tk.Frame(self, bg=BG)
         self.quiz_frame     = tk.Frame(self, bg=BG)
         self.complete_frame = tk.Frame(self, bg=BG)
+        self.result_frame   = tk.Frame(self, bg=BG)
 
         self._build_start()
         self._build_quiz()
         self._build_complete()
+        self._build_result()
         self._show_start()
 
     # ── 시작 화면 ───────────────────────────────────
@@ -227,6 +229,7 @@ class KanaQuiz(tk.Tk):
 
     def _show_start(self):
         self.complete_frame.pack_forget()
+        self.result_frame.pack_forget()
         self.quiz_frame.pack_forget()
         self.start_frame.pack(fill="both", expand=True)
 
@@ -293,6 +296,10 @@ class KanaQuiz(tk.Tk):
 
         tk.Label(f, text="한글 발음 입력 후  Enter",
                  bg=BG, fg=SUBTEXT, font=("Segoe UI", 9)).pack()
+
+        # 무한반복 모드 전용 종료 버튼
+        self.quit_btn = make_action_btn(f, "종료", WRONG, self._show_result)
+        self.quit_btn.pack(pady=(14, 0))
 
     # ── 완료 화면 ───────────────────────────────────
     def _build_complete(self):
@@ -362,6 +369,71 @@ class KanaQuiz(tk.Tk):
         wrong_data = dict(self.wrong_set)
         self._start_quiz(wrong_data, no_dupe=True)
 
+    # ── 오답 결과 화면 (무한반복 종료 후) ──────────────
+    def _build_result(self):
+        f = self.result_frame
+
+        tk.Label(f, text="오답 목록", bg=BG, fg=WRONG,
+                 font=("Segoe UI", 22, "bold")).pack(pady=(30, 4))
+
+        self.result_score_label = tk.Label(f, text="", bg=BG, fg=SUBTEXT,
+                                           font=("Segoe UI", 11))
+        self.result_score_label.pack(pady=(0, 14))
+
+        # 스크롤 가능한 오답 리스트
+        list_frame = tk.Frame(f, bg=BORDER, padx=1, pady=1)
+        list_frame.pack(fill="both", expand=True, padx=40)
+
+        canvas = tk.Canvas(list_frame, bg=CARD_BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        self.result_inner = tk.Frame(canvas, bg=CARD_BG)
+
+        self.result_inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=self.result_inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.result_canvas = canvas
+
+        make_action_btn(f, "홈으로 가기", DIM, self._show_start).pack(pady=16)
+
+    def _show_result(self):
+        if self.feedback_job:
+            self.after_cancel(self.feedback_job)
+            self.feedback_job = None
+
+        pct = int(self.correct / self.total * 100) if self.total > 0 else 0
+        self.result_score_label.config(
+            text=f"정답률  {pct}%  ({self.correct} / {self.total})    틀린 문제  {len(self.wrong_set)}개")
+
+        # 오답 목록 초기화 후 재구성
+        for w in self.result_inner.winfo_children():
+            w.destroy()
+
+        if not self.wrong_set:
+            tk.Label(self.result_inner, text="틀린 문제가 없습니다!",
+                     bg=CARD_BG, fg=CORRECT,
+                     font=("Segoe UI", 14, "bold"), pady=20).pack()
+        else:
+            for kana, answer in self.wrong_set:
+                row = tk.Frame(self.result_inner, bg=CARD_BG)
+                row.pack(fill="x", padx=16, pady=4)
+                tk.Label(row, text=kana, bg=CARD_BG, fg=TEXT,
+                         font=("Meiryo", 22, "bold"), width=4).pack(side="left")
+                tk.Label(row, text="→", bg=CARD_BG, fg=SUBTEXT,
+                         font=("Segoe UI", 14), padx=8).pack(side="left")
+                tk.Label(row, text=answer, bg=CARD_BG, fg=WRONG,
+                         font=("Segoe UI", 18, "bold")).pack(side="left")
+
+        self.result_canvas.yview_moveto(0)
+        self.quiz_frame.pack_forget()
+        self.result_frame.pack(fill="both", expand=True)
+
     # ── 퀴즈 로직 ───────────────────────────────────
     def _start_quiz(self, data: dict, no_dupe: bool = False):
         self.no_dupe_mode = no_dupe
@@ -386,8 +458,15 @@ class KanaQuiz(tk.Tk):
         self.score_label.config(text="0 / 0")
         self.streak_label.config(text="")
         self.entry.config(state="normal")
+
+        if no_dupe:
+            self.quit_btn.pack_forget()
+        else:
+            self.quit_btn.pack(pady=(14, 0))
+
         self.start_frame.pack_forget()
         self.complete_frame.pack_forget()
+        self.result_frame.pack_forget()
         self.quiz_frame.pack(fill="both", expand=True)
         self._next_question()
 
@@ -470,11 +549,10 @@ class KanaQuiz(tk.Tk):
                 text=f"오답    정답:  {self.current_answer}", fg=WRONG)
             self._draw_card(WRONG)
             self.streak_label.config(text="")
-            # 오답 수집 (중복 없이)
-            if self.no_dupe_mode:
-                pair = (self.current_kana, self.current_answer)
-                if pair not in self.wrong_set:
-                    self.wrong_set.append(pair)
+            # 오답 수집 (중복 없이, 두 모드 모두)
+            pair = (self.current_kana, self.current_answer)
+            if pair not in self.wrong_set:
+                self.wrong_set.append(pair)
 
         pct = int(self.correct / self.total * 100)
         self.score_label.config(text=f"{self.correct} / {self.total}  ({pct}%)")
