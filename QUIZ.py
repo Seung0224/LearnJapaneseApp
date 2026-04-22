@@ -169,7 +169,8 @@ class KanaQuiz(tk.Tk):
         self.no_dupe_mode   = False
         self.deck           = []
         self.deck_total     = 0
-        self.wrong_set      = []   # 오답 목록 (중복 없음)
+        self.wrong_set      = []
+        self.recent_queue   = []   # 무한반복 모드 최근 출제 목록
 
         base = os.path.dirname(os.path.abspath(__file__))
         self.table_img_path = os.path.join(base, "Table.png")
@@ -371,13 +372,15 @@ class KanaQuiz(tk.Tk):
         self.streak       = 0
 
         if no_dupe:
-            self.deck       = self.kana_list.copy()
+            self.deck         = self.kana_list.copy()
             random.shuffle(self.deck)
-            self.deck_total = len(self.deck)
+            self.deck_total   = len(self.deck)
+            self.recent_queue = []
             self.remain_label.config(text=f"남은 문제: {self.deck_total} / {self.deck_total}")
         else:
-            self.deck       = []
-            self.deck_total = 0
+            self.deck         = []
+            self.deck_total   = 0
+            self.recent_queue = []
             self.remain_label.config(text="")
 
         self.score_label.config(text="0 / 0")
@@ -415,7 +418,15 @@ class KanaQuiz(tk.Tk):
             remaining = len(self.deck)
             self.remain_label.config(text=f"남은 문제: {remaining} / {self.deck_total}")
         else:
-            self.current_kana, self.current_answer = random.choice(self.kana_list)
+            n          = max(1, len(self.kana_list) // 2)
+            candidates = [k for k in self.kana_list if k[0] not in self.recent_queue]
+            if not candidates:
+                candidates = self.kana_list
+            chosen = random.choice(candidates)
+            self.current_kana, self.current_answer = chosen
+            self.recent_queue.append(self.current_kana)
+            if len(self.recent_queue) > n:
+                self.recent_queue.pop(0)
 
         self.feedback_label.config(text="")
         self._draw_card(BORDER)
