@@ -147,9 +147,16 @@ class KanaQuiz(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("일본어 퀴즈")
-        self.geometry("540x620")
         self.resizable(False, False)
         self.configure(bg=BG)
+
+        w, h = 540, 620
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x  = (sw - w) // 2
+        y  = (sh - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
         self.correct        = 0
         self.total          = 0
